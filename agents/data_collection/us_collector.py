@@ -5,7 +5,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
-from models.stock import Stock, PriceBar, FinancialStatement, BioMetrics, NewsItem, Market, Sector
+from models.stock import Stock, PriceBar, FinancialStatement, BioMetrics, ValuationMetrics, NewsItem, Market, Sector
 from config.settings import CollectorConfig
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,8 @@ class USDataCollector:
 
         if sector == Sector.BIO:
             stock.bio_metrics = self._fetch_bio_metrics(yf_ticker, info)
+
+        stock.valuation = self._fetch_valuation(info)
 
         return stock
 
@@ -132,10 +134,39 @@ class USDataCollector:
                 cash=_safe(balance, "Cash And Cash Equivalents"),
                 operating_cash_flow=_safe(cashflow, "Operating Cash Flow"),
                 capex=_safe(cashflow, "Capital Expenditure"),
+                current_assets=_safe(balance, "Current Assets"),
+                current_liabilities=_safe(balance, "Current Liabilities"),
             )
             statements.append(stmt)
 
         return statements
+
+    def _fetch_valuation(self, info: dict) -> Optional[ValuationMetrics]:
+        def _f(key: str) -> Optional[float]:
+            val = info.get(key)
+            try:
+                return float(val) if val is not None and str(val) not in ("nan", "None", "Infinity") else None
+            except (TypeError, ValueError):
+                return None
+
+        market_cap = _f("marketCap")
+        if not market_cap:
+            return None
+
+        pe = _f("trailingPE")
+        pb = _f("priceToBook")
+        ev = _f("enterpriseValue")
+        ebitda = _f("ebitda")
+        ev_ebitda = _f("enterpriseToEbitda")
+
+        # yfinance가 ev_ebitda를 주지 않으면 직접 계산
+        if ev_ebitda is None and ev and ebitda and ebitda > 0:
+            ev_ebitda = ev / ebitda
+
+        return ValuationMetrics(
+            market_cap=market_cap, pe_ratio=pe, pb_ratio=pb,
+            ev=ev, ebitda=ebitda, ev_ebitda=ev_ebitda,
+        )
 
     def _fetch_bio_metrics(self, yf_ticker, info: dict) -> BioMetrics:
         """Bio 섹터 전용 지표 추출 (가용한 데이터 범위 내)"""

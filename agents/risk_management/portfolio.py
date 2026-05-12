@@ -5,9 +5,25 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
-from models.stock import Stock, Sector
+from models.stock import Stock, Sector, Market
 from agents.analysis.analysis_agent import AnalysisResult
 from config.settings import RiskConfig
+
+_US_MARKETS = {Market.US_NYSE, Market.US_NASDAQ}
+
+
+def _fetch_usd_krw() -> float:
+    """USD/KRW 환율 실시간 조회. 실패 시 fallback 1300 사용."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker("KRW=X").history(period="1d")
+        if not hist.empty:
+            rate = float(hist["Close"].iloc[-1])
+            logger.info(f"[Portfolio] USD/KRW 환율: {rate:.1f}")
+            return rate
+    except Exception as e:
+        logger.warning(f"[Portfolio] 환율 조회 실패, fallback 1300 사용: {e}")
+    return 1300.0
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +61,7 @@ class PortfolioManager:
         AnalysisResult 점수 기반으로 포트폴리오 비중 산출.
         stocks: ticker → Stock 매핑 (현재가 조회용)
         """
+        usd_krw = _fetch_usd_krw()
         alloc = PortfolioAllocation(total_capital=self.cfg.total_capital)
 
         # 투자적합 종목만 대상
@@ -77,8 +94,10 @@ class PortfolioManager:
             r = result_map[ticker]
             stock = stocks.get(ticker)
             price = stock.latest_price.close if stock and stock.latest_price else 0.0
+            # US 주식은 USD → KRW 변환
+            price_krw = price * usd_krw if stock and stock.market in _US_MARKETS else price
             amount = self.cfg.total_capital * weight
-            shares = int(amount / price) if price > 0 else 0
+            shares = int(amount / price_krw) if price_krw > 0 else 0
 
             alloc.positions.append(Position(
                 ticker=ticker,

@@ -8,15 +8,17 @@ from typing import List, Optional
 from models.stock import Stock, Sector
 from agents.analysis.fundamental import FundamentalAnalyzer, FundamentalScore
 from agents.analysis.technical import TechnicalAnalyzer, TechnicalScore
+from agents.analysis.valuation import ValuationAnalyzer, ValuationScore
 from agents.analysis.sentiment import SentimentAnalyzer, NullSentimentAnalyzer, SentimentResult
 from config.settings import AnalysisConfig
 
 logger = logging.getLogger(__name__)
 
-# 가중치: 펀더멘털 50 / 기술적 30 / 감성 20
-WEIGHT_FUNDAMENTAL = 0.50
-WEIGHT_TECHNICAL = 0.30
-WEIGHT_SENTIMENT = 0.20
+# 가중치: 펀더멘털 35 / 밸류에이션 25 / 기술적 25 / 감성 15
+WEIGHT_FUNDAMENTAL = 0.35
+WEIGHT_VALUATION   = 0.25
+WEIGHT_TECHNICAL   = 0.25
+WEIGHT_SENTIMENT   = 0.15
 
 
 @dataclass
@@ -26,6 +28,7 @@ class AnalysisResult:
     sector: Sector
 
     fundamental: Optional[FundamentalScore] = None
+    valuation: Optional[ValuationScore] = None
     technical: Optional[TechnicalScore] = None
     sentiment: Optional[SentimentResult] = None
 
@@ -43,6 +46,7 @@ class AnalysisAgent:
         sentiment_analyzer: Optional[SentimentAnalyzer] = None,
     ):
         self.fundamental = FundamentalAnalyzer(cfg)
+        self.valuation = ValuationAnalyzer()
         self.technical = TechnicalAnalyzer(cfg)
         self.sentiment = sentiment_analyzer or NullSentimentAnalyzer()
 
@@ -73,10 +77,13 @@ class AnalysisAgent:
             logger.info(f"[Analysis] {stock.ticker} 탈락 — {result.summary}")
             return result
 
-        # 2. 기술적
+        # 2. 밸류에이션
+        result.valuation = self.valuation.analyze(stock)
+
+        # 3. 기술적
         result.technical = self.technical.analyze(stock)
 
-        # 3. 감성 (뉴스 있을 때만)
+        # 4. 감성 (뉴스 있을 때만)
         if stock.news:
             result.sentiment = self.sentiment.analyze(stock.ticker, stock.news)
 
@@ -93,24 +100,45 @@ class AnalysisAgent:
 
     def _combine_scores(self, result: AnalysisResult) -> float:
         f_score = result.fundamental.score if result.fundamental else 0.0
+        v_score = result.valuation.score if result.valuation else 0.0
         t_score = result.technical.score if result.technical else 0.0
 
-        # 감성 점수: -1~+1 → 0~100 변환
-        s_score = 50.0  # 감성 데이터 없으면 중립
-        if result.sentiment and result.sentiment.avg_score is not None:
-            s_score = (result.sentiment.avg_score + 1) / 2 * 100
+        # 감성 점수: -1~+1 → 0~100 변환, 데이터 없으면 중립(50)
+        has_sentiment = result.sentiment and result.sentiment.avg_score is not None
+        s_score = ((result.sentiment.avg_score + 1) / 2 * 100) if has_sentiment else 50.0
 
-        # 감성 데이터 없으면 가중치 재분배
-        if result.sentiment is None or result.sentiment.avg_score is None:
-            total = (
-                f_score * (WEIGHT_FUNDAMENTAL / (WEIGHT_FUNDAMENTAL + WEIGHT_TECHNICAL))
-                + t_score * (WEIGHT_TECHNICAL / (WEIGHT_FUNDAMENTAL + WEIGHT_TECHNICAL))
-            )
-        else:
+        # 밸류에이션 데이터가 없으면 해당 가중치를 나머지에 비례 분배
+        has_valuation = result.valuation and result.valuation.score > 0
+
+        if has_sentiment and has_valuation:
             total = (
                 f_score * WEIGHT_FUNDAMENTAL
+                + v_score * WEIGHT_VALUATION
                 + t_score * WEIGHT_TECHNICAL
                 + s_score * WEIGHT_SENTIMENT
+            )
+        elif has_valuation:
+            # 감성 가중치를 펀더멘털·밸류에이션·기술에 비례 분배
+            w_sum = WEIGHT_FUNDAMENTAL + WEIGHT_VALUATION + WEIGHT_TECHNICAL
+            total = (
+                f_score * (WEIGHT_FUNDAMENTAL / w_sum)
+                + v_score * (WEIGHT_VALUATION / w_sum)
+                + t_score * (WEIGHT_TECHNICAL / w_sum)
+            )
+        elif has_sentiment:
+            # 밸류에이션 가중치를 펀더멘털·기술·감성에 비례 분배
+            w_sum = WEIGHT_FUNDAMENTAL + WEIGHT_TECHNICAL + WEIGHT_SENTIMENT
+            total = (
+                f_score * (WEIGHT_FUNDAMENTAL / w_sum)
+                + t_score * (WEIGHT_TECHNICAL / w_sum)
+                + s_score * (WEIGHT_SENTIMENT / w_sum)
+            )
+        else:
+            # 밸류에이션·감성 모두 없음
+            w_sum = WEIGHT_FUNDAMENTAL + WEIGHT_TECHNICAL
+            total = (
+                f_score * (WEIGHT_FUNDAMENTAL / w_sum)
+                + t_score * (WEIGHT_TECHNICAL / w_sum)
             )
 
         return round(total, 2)
@@ -124,6 +152,16 @@ class AnalysisAgent:
             parts.append(f"ROE={roe_str}")
             if f.moat.revenue_growth_consistency is not None:
                 parts.append(f"매출일관성={f.moat.revenue_growth_consistency*100:.0f}%")
+
+        v = result.valuation
+        if v and v.score > 0:
+            parts.append(f"밸류={v.verdict}({v.score:.0f})")
+            if v.pe_ratio:
+                parts.append(f"PER={v.pe_ratio:.1f}")
+            if v.pb_ratio:
+                parts.append(f"PBR={v.pb_ratio:.1f}")
+            if v.ev_ebitda:
+                parts.append(f"EV/EBITDA={v.ev_ebitda:.1f}")
 
         t = result.technical
         if t:

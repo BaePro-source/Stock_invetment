@@ -5,7 +5,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Dict
 
-from models.stock import Stock, PriceBar, FinancialStatement, NewsItem, Market, Sector
+from models.stock import Stock, PriceBar, FinancialStatement, BioMetrics, ValuationMetrics, NewsItem, Market, Sector
 from config.settings import CollectorConfig
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,11 @@ class KRDataCollector:
 
         stock.price_history = self._fetch_prices(ticker)
         stock.financials = self._fetch_financials(ticker)
+
+        if sector == Sector.BIO:
+            stock.bio_metrics = self._fetch_bio_metrics(stock.financials)
+
+        stock.valuation = self._fetch_valuation(ticker, stock.financials)
 
         return stock
 
@@ -170,5 +175,57 @@ class KRDataCollector:
             total_equity=_get_value("자본총계"),
             total_debt=_get_value("부채총계"),
             cash=_get_value("현금및현금성자산"),
+            operating_cash_flow=_get_value("영업활동현금흐름"),
+            current_assets=_get_value("유동자산"),
+            current_liabilities=_get_value("유동부채"),
         )
         return stmt
+
+    def _fetch_valuation(self, ticker: str, financials: list) -> Optional[ValuationMetrics]:
+        try:
+            from pykrx import stock as pykrx_stock
+            today = date.today().strftime("%Y%m%d")
+            cap_df = pykrx_stock.get_market_cap(today, ticker)
+            if cap_df is None or cap_df.empty:
+                return None
+
+            row = cap_df.iloc[0]
+            market_cap = float(row.get("시가총액", 0) or 0)
+            if market_cap <= 0:
+                return None
+
+            latest = max(financials, key=lambda f: f.fiscal_year) if financials else None
+            pe, pb, ev, ebitda, ev_ebitda = None, None, None, None, None
+
+            if latest:
+                if latest.net_income and latest.net_income > 0:
+                    pe = market_cap / latest.net_income
+                if latest.total_equity and latest.total_equity > 0:
+                    pb = market_cap / latest.total_equity
+                debt = latest.total_debt or 0
+                cash = latest.cash or 0
+                ev = market_cap + debt - cash
+                # EBITDA 근사: 영업이익 사용 (D&A 데이터 없음)
+                if latest.operating_income and latest.operating_income > 0:
+                    ebitda = latest.operating_income
+                    ev_ebitda = ev / ebitda
+
+            return ValuationMetrics(
+                market_cap=market_cap, pe_ratio=pe, pb_ratio=pb,
+                ev=ev, ebitda=ebitda, ev_ebitda=ev_ebitda,
+            )
+        except Exception as e:
+            logger.debug(f"[KR] 밸류에이션 수집 실패 ({ticker}): {e}")
+            return None
+
+    def _fetch_bio_metrics(self, financials: list) -> Optional[BioMetrics]:
+        if not financials:
+            return None
+        latest = max(financials, key=lambda f: f.fiscal_year)
+        burn_rate = None
+        runway = None
+        if latest.operating_cash_flow is not None and latest.operating_cash_flow < 0:
+            burn_rate = abs(latest.operating_cash_flow) / 12
+            if latest.cash and burn_rate > 0:
+                runway = latest.cash / burn_rate
+        return BioMetrics(monthly_burn_rate=burn_rate, cash_runway_months=runway)

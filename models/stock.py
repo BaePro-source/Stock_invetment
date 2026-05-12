@@ -41,6 +41,14 @@ class FinancialStatement:
     cash: Optional[float] = None              # 현금 및 현금성 자산
     operating_cash_flow: Optional[float] = None  # 영업현금흐름
     capex: Optional[float] = None             # 설비투자
+    current_assets: Optional[float] = None    # 유동자산
+    current_liabilities: Optional[float] = None  # 유동부채
+
+    @property
+    def current_ratio(self) -> Optional[float]:
+        if self.current_assets and self.current_liabilities and self.current_liabilities != 0:
+            return self.current_assets / self.current_liabilities
+        return None
 
     @property
     def roe(self) -> Optional[float]:
@@ -59,6 +67,16 @@ class FinancialStatement:
         if self.operating_income and self.revenue and self.revenue != 0:
             return self.operating_income / self.revenue
         return None
+
+
+@dataclass
+class ValuationMetrics:
+    market_cap: Optional[float] = None     # 시가총액
+    pe_ratio: Optional[float] = None       # PER (주가수익비율)
+    pb_ratio: Optional[float] = None       # PBR (주가순자산비율)
+    ev: Optional[float] = None             # Enterprise Value
+    ebitda: Optional[float] = None         # EBITDA (영업이익 근사)
+    ev_ebitda: Optional[float] = None      # EV/EBITDA
 
 
 @dataclass
@@ -92,6 +110,7 @@ class Stock:
     financials: List[FinancialStatement] = field(default_factory=list)
     news: List[NewsItem] = field(default_factory=list)
     bio_metrics: Optional[BioMetrics] = None   # Bio 섹터만 사용
+    valuation: Optional[ValuationMetrics] = None
     collected_at: Optional[datetime] = None
 
     @property

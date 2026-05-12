@@ -101,6 +101,16 @@ class RiskConfig:
 
 
 @dataclass
+class BacktestConfig:
+    initial_capital: float = 10_000_000.0
+    rebalance_period: str = "monthly"    # weekly / monthly / quarterly
+    top_n_stocks: int = 10
+    min_score: float = 50.0
+    commission_pct: float = 0.003        # 편도 0.3%
+    risk_free_rate: float = 0.03         # 연 3% (Sharpe 계산용)
+
+
+@dataclass
 class AppConfig:
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
@@ -108,6 +118,7 @@ class AppConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     news: NewsConfig = field(default_factory=NewsConfig)
+    backtest: BacktestConfig = field(default_factory=BacktestConfig)
 
 
 # 싱글턴 설정 인스턴스

@@ -106,6 +106,14 @@ class FundamentalAnalyzer:
             )
             passed = False
 
+        # 유동비율 — Bio는 개발 단계 기업 특성상 면제
+        if stock.sector != Sector.BIO:
+            if latest.current_ratio is not None and latest.current_ratio < self.cfg.min_current_ratio:
+                result.fail_reasons.append(
+                    f"유동비율 {latest.current_ratio:.2f} < 최소 {self.cfg.min_current_ratio:.1f}"
+                )
+                passed = False
+
         return passed
 
     def _analyze_moat(self, fs_list: List[FinancialStatement]) -> MoatSignals:

@@ -83,18 +83,19 @@ class TechnicalAnalyzer:
             return None
 
         deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-        recent = deltas[-period:]
 
-        gains = [d for d in recent if d > 0]
-        losses = [abs(d) for d in recent if d < 0]
+        # 첫 period개로 초기 단순 평균
+        avg_gain = sum(max(d, 0) for d in deltas[:period]) / period
+        avg_loss = sum(abs(min(d, 0)) for d in deltas[:period]) / period
 
-        avg_gain = sum(gains) / period if gains else 0.0
-        avg_loss = sum(losses) / period if losses else 0.0
+        # 이후 Wilder's EMA 적용
+        for d in deltas[period:]:
+            avg_gain = (avg_gain * (period - 1) + max(d, 0)) / period
+            avg_loss = (avg_loss * (period - 1) + abs(min(d, 0))) / period
 
         if avg_loss == 0:
             return 100.0
-        rs = avg_gain / avg_loss
-        return round(100 - (100 / (1 + rs)), 2)
+        return round(100 - (100 / (1 + avg_gain / avg_loss)), 2)
 
     @staticmethod
     def _return(closes: List[float], lookback: int) -> Optional[float]:

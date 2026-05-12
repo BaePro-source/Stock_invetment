@@ -19,6 +19,7 @@ from agents.analysis import AnalysisAgent
 from agents.analysis.sentiment import LlamaSentimentAnalyzer
 from agents.risk_management import RiskManagementAgent
 from agents.decision_executor import DecisionExecutor
+from backtesting import BacktestEngine
 
 from preprocessing import PreprocessingPipeline
 
@@ -70,5 +71,29 @@ def run(report_path: str = "report.txt"):
     return execution
 
 
+def run_backtest(report_path: str = "backtest_report.txt"):
+    """데이터 수집 후 백테스트만 실행."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+
+    logger.info("=== [1/2] 데이터 수집 ===")
+    kr_stocks = KRDataCollector(config.collector).collect_universe()
+    us_stocks = USDataCollector(config.collector).collect_universe()
+    all_stocks = kr_stocks + us_stocks
+    logger.info(f"KR {len(kr_stocks)}개 / US {len(us_stocks)}개 수집 완료")
+
+    logger.info("=== [2/2] 백테스트 실행 ===")
+    engine = BacktestEngine(config.backtest, config.analysis)
+    result = engine.run(all_stocks)
+
+    save_path = f"backtest_{ts}.txt"
+    result.save_report(save_path)
+    print("\n" + result.report_text)
+    return result
+
+
 if __name__ == "__main__":
-    run()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "backtest":
+        run_backtest()
+    else:
+        run()
